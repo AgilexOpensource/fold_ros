@@ -23,6 +23,8 @@ DEFAULT_FOLD_YAML = "fold.yaml"
 DEFAULT_MODULE_KEY = "fold"
 TARGET_MODE_POSITION = 1
 TARGET_MODE_UNCHANGED = 0xFF
+# Delay between per-joint enable/disable frames; some boards drop back-to-back frames.
+ENABLE_INTERVAL_S = 0.1
 
 
 def package_config_dir() -> Path:
@@ -123,7 +125,7 @@ class FoldRosNode(Node):
                 raise RuntimeError("failed to open CAN: %s" % self._group.can_channel)
             if self._auto_configure and not self._group.configure():
                 raise RuntimeError("fold configure failed")
-            if self._auto_enable and not self._group.enable():
+            if self._auto_enable and not self._group.enable(ENABLE_INTERVAL_S):
                 raise RuntimeError("fold enable failed")
         except Exception:
             try:
@@ -277,7 +279,11 @@ class FoldRosNode(Node):
         return response
 
     def _on_enable(self, request: SetBool.Request, response: SetBool.Response) -> SetBool.Response:
-        ok = self._group.enable() if request.data else self._group.disable()
+        ok = (
+            self._group.enable(ENABLE_INTERVAL_S)
+            if request.data
+            else self._group.disable(ENABLE_INTERVAL_S)
+        )
         if not request.data:
             for name in self._position_mode_sent:
                 self._position_mode_sent[name] = False

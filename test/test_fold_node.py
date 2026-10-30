@@ -230,8 +230,9 @@ def configure_startup(module, monkeypatch):
     group = SimpleNamespace(
         joint_names=["joint1"], joint_count=1, index_of=lambda name: 0,
         can_channel="can0", connect=lambda: True, configure=lambda: True,
-        enable=lambda: True, close=lambda: closed.append(True),
+        enable_intervals=[], close=lambda: closed.append(True),
     )
+    group.enable = lambda interval=0.0: group.enable_intervals.append(interval) or True
     monkeypatch.setattr(module, "resolve_yaml_path", lambda value: Path("fold.yaml"))
     monkeypatch.setattr(module.ArmJointGroup, "from_yaml", lambda *args: group, raising=False)
     return group, closed
@@ -240,7 +241,7 @@ def configure_startup(module, monkeypatch):
 @pytest.mark.parametrize("method", ["connect", "configure", "enable"])
 def test_startup_failure_closes_group(fold_node, monkeypatch, method):
     group, closed = configure_startup(fold_node, monkeypatch)
-    setattr(group, method, lambda: False)
+    setattr(group, method, lambda *args: False)
     with pytest.raises(RuntimeError):
         fold_node.FoldRosNode()
     assert closed == [True]
@@ -260,6 +261,18 @@ def test_startup_parameters_readonly_and_default_rates(fold_node, monkeypatch):
     assert len(node.descriptors) == 9
     assert all(descriptor.read_only for descriptor in node.descriptors.values())
     assert [period for period, _ in node.timers] == [0.01, 0.5]
+
+
+def test_enable_uses_frame_interval(fold_node, monkeypatch):
+    group, _ = configure_startup(fold_node, monkeypatch)
+    node = fold_node.FoldRosNode()
+    assert group.enable_intervals == [0.1]
+    disable_intervals = []
+    group.disable = lambda interval=0.0: disable_intervals.append(interval) or True
+    for data in (True, False):
+        node._on_enable(SimpleNamespace(data=data), SimpleNamespace())
+    assert group.enable_intervals == [0.1, 0.1]
+    assert disable_intervals == [0.1]
 
 
 def test_main_shuts_down_after_construction_failure(fold_node, monkeypatch):
