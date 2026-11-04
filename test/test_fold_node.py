@@ -14,6 +14,7 @@ class DiagnosticArray:
 
 class DiagnosticStatus:
     OK = 0
+    WARN = 1
     ERROR = 2
     STALE = 3
 
@@ -75,7 +76,7 @@ def fold_node(monkeypatch):
         },
         "agx_motor_sdk": {},
         "agx_motor_sdk.mechanism": {
-            "ArmJointGroup": SimpleNamespace(INVALID_JOINT_INDEX=-1)
+            "JointGroup": SimpleNamespace(INVALID_JOINT_INDEX=-1)
         },
     }
     for name, attributes in module_attributes.items():
@@ -234,7 +235,7 @@ def configure_startup(module, monkeypatch):
     )
     group.enable = lambda interval=0.0: group.enable_intervals.append(interval) or True
     monkeypatch.setattr(module, "resolve_yaml_path", lambda value: Path("fold.yaml"))
-    monkeypatch.setattr(module.ArmJointGroup, "from_yaml", lambda *args: group, raising=False)
+    monkeypatch.setattr(module.JointGroup, "from_yaml", lambda *args: group, raising=False)
     return group, closed
 
 
@@ -283,3 +284,97 @@ def test_main_shuts_down_after_construction_failure(fold_node, monkeypatch):
     with pytest.raises(RuntimeError, match="startup"):
         fold_node.main()
     assert closed == [True]
+
+
+RB200_BIT_POSITIONS = {
+    "ready_to_switch_on": 0, "switched_on": 1, "operation_enabled": 2, "fault": 3,
+    "voltage_enabled": 4, "quick_stop": 5, "switch_on_disabled": 6, "warning": 7,
+    "remote": 9, "target_reached": 10, "internal_limit_active": 11, "homing_complete": 15,
+}
+RB200_KEYS = {
+    "enabled", "cia402_state", "ready_to_switch_on", "switched_on", "fault", "voltage_enabled",
+    "switch_on_disabled", "warning", "remote", "target_reached", "internal_limit_active",
+    "homing_complete", "quick_stop_active", "error_code", "status_word", "control_mode",
+}
+
+
+def make_rb200_feedback(status_word, timestamp_ns=9_000_000_000, error_code=0):
+    return SimpleNamespace(
+        status_word=status_word, error_code=error_code, tpdo2_count=1,
+        status=SimpleNamespace(**{
+            name: bool(status_word >> bit & 1) for name, bit in RB200_BIT_POSITIONS.items()
+        }),
+        timestamp_ns=timestamp_ns,
+    )
+
+
+def publish_rb200_status(module, feedbacks):
+    node = module.FoldRosNode.__new__(module.FoldRosNode)
+    motors = [
+        SimpleNamespace(
+            can_channel="can0", node_id=index + 1, protocol="rb200",
+            get_low_speed_feedback=lambda feedback=feedback: feedback,
+        )
+        for index, feedback in enumerate(feedbacks)
+    ]
+    node._group = SimpleNamespace(joint_count=len(motors), motor=motors.__getitem__)
+    node._joint_names = ["joint%d" % (index + 1) for index in range(len(motors))]
+    node._status_timeout = 2.0
+    node._control_mode = "pos"
+    published = []
+    node._status_pub = SimpleNamespace(publish=published.append)
+    node.get_clock = lambda: SimpleNamespace(
+        now=lambda: SimpleNamespace(to_msg=lambda: "ros_stamp")
+    )
+    node._publish_status()
+    return published[0].status
+
+
+def test_rb200_status_word_published(fold_node):
+    statuses = publish_rb200_status(fold_node, [
+        make_rb200_feedback(0x0637), make_rb200_feedback(0x0631),
+        make_rb200_feedback(0x0638), make_rb200_feedback(0x0637, 7_000_000_000), None,
+    ])
+    values = [{entry.key: entry.value for entry in status.values} for status in statuses]
+    assert set(values[0]) == RB200_KEYS
+    assert [v["status_word"] for v in values] == [
+        "0x0637", "0x0631", "0x0638", "unknown", "unknown",
+    ]
+    assert [v["enabled"] for v in values] == ["true", "false", "false", "unknown", "unknown"]
+    assert [status.level for status in statuses] == [
+        DiagnosticStatus.OK, DiagnosticStatus.OK, DiagnosticStatus.ERROR,
+        DiagnosticStatus.STALE, DiagnosticStatus.STALE,
+    ]
+    assert [status.message for status in statuses[:3]] == ["operation_enabled", "ready_to_switch_on", "fault, error_code 0x0000"]
+
+
+def test_rb200_cia402_state_decoding(fold_node):
+    cia402_state = fold_node.cia402_state
+
+    assert cia402_state(0x0000) == "not_ready_to_switch_on"
+    assert cia402_state(0x0040) == "switch_on_disabled"
+    assert cia402_state(0x0021) == "ready_to_switch_on"
+    assert cia402_state(0x0023) == "switched_on"
+    assert cia402_state(0x1637) == "operation_enabled"
+    assert cia402_state(0x0007) == "quick_stop_active"
+    assert cia402_state(0x000F) == "fault_reaction_active"
+    assert cia402_state(0x0008) == "fault"
+
+
+def test_rb200_status_bits_and_error_code(fold_node):
+    statuses = publish_rb200_status(fold_node, [
+        make_rb200_feedback(0x1637), make_rb200_feedback(0x0638, error_code=0x8130),
+        make_rb200_feedback(0x00B7), make_rb200_feedback(0x0017),
+    ])
+    values = [{item.key: item.value for item in status.values} for status in statuses]
+
+    assert values[0]["cia402_state"] == "operation_enabled"
+    assert values[0]["target_reached"] == "true"
+    assert values[0]["remote"] == "true"
+    assert values[0]["quick_stop_active"] == "false"
+    assert values[1]["error_code"] == "0x8130"
+    assert statuses[1].message == "fault, error_code 0x8130"
+    assert statuses[2].level == DiagnosticStatus.WARN
+    assert values[2]["warning"] == "true"
+    assert values[3]["cia402_state"] == "quick_stop_active"
+    assert values[3]["quick_stop_active"] == "true"

@@ -3,7 +3,7 @@
 <package format="3">
   <name>fold_ros</name>
   <version>0.1.0</version>
-  <description>ROS 2 bridge for agx_motor_sdk ArmJointGroup (fold, arm protocol)</description>
+  <description>ROS 2 bridge for agx_motor_sdk JointGroup (fold, RB200 protocol)</description>
 
   <author>kehuanjack</author>
   <maintainer email="contact@agilex.ai">Agilex Robotics</maintainer>

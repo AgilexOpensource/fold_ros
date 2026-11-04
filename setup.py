@@ -19,7 +19,7 @@ setup(
     zip_safe=True,
     maintainer="Agilex Robotics",
     maintainer_email="contact@agilex.ai",
-    description="ROS 2 bridge for agx_motor_sdk ArmJointGroup (fold, arm protocol)",
+    description="ROS 2 bridge for agx_motor_sdk JointGroup (fold, RB200 protocol)",
     license="Apache-2.0",
     entry_points={
         "console_scripts": [

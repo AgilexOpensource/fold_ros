@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ROS 2 node bridging agx_motor_sdk ArmJointGroup for fold (arm protocol, position only)."""
+"""ROS 2 node bridging agx_motor_sdk JointGroup for fold (RB200 protocol, position only)."""
 
 import math
 import os
@@ -16,7 +16,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_srvs.srv import SetBool
 
-from agx_motor_sdk.mechanism import ArmJointGroup
+from agx_motor_sdk.mechanism import JointGroup
 
 PACKAGE_NAME = "fold_ros"
 DEFAULT_FOLD_YAML = "fold.yaml"
@@ -70,6 +70,33 @@ def resolve_module_key(module_key: str, config_path: Path) -> str:
     raise ValueError("module_key is empty and cannot be inferred from yaml_path")
 
 
+# CiA 402 status word bits decoded by the SDK; operation_enabled is published as "enabled"
+# and bit5 (quick stop, active low) as quick_stop_active.
+RB200_STATUS_BITS = (
+    "ready_to_switch_on", "switched_on", "fault", "voltage_enabled", "switch_on_disabled",
+    "warning", "remote", "target_reached", "internal_limit_active", "homing_complete",
+)
+
+
+def cia402_state(status_word: int) -> str:
+    """Return the CiA 402 drive state encoded in a status word."""
+    masked = status_word & 0x4F
+    if masked == 0x00:
+        return "not_ready_to_switch_on"
+    if masked == 0x40:
+        return "switch_on_disabled"
+    if masked == 0x0F:
+        return "fault_reaction_active"
+    if masked == 0x08:
+        return "fault"
+    return {
+        0x21: "ready_to_switch_on",
+        0x23: "switched_on",
+        0x27: "operation_enabled",
+        0x07: "quick_stop_active",
+    }.get(status_word & 0x6F, "unknown")
+
+
 class FoldRosNode(Node):
     """Publish joint feedback and accept JointState position commands."""
 
@@ -110,7 +137,7 @@ class FoldRosNode(Node):
         module_key = resolve_module_key(
             str(self.get_parameter("module_key").value), config_path
         )
-        self._group = ArmJointGroup.from_yaml(str(config_path), module_key, can_channel)
+        self._group = JointGroup.from_yaml(str(config_path), module_key, can_channel)
 
         self._joint_by_name: Dict[str, int] = {
             name: self._group.index_of(name) for name in self._group.joint_names
@@ -185,6 +212,10 @@ class FoldRosNode(Node):
             status.hardware_id = "%s:%s" % (motor.can_channel, motor.node_id)
             status.level = DiagnosticStatus.STALE
             status.message = "low-speed feedback unavailable"
+            if getattr(motor, "protocol", "arm") == "rb200":
+                self._fill_rb200_status(status, motor, now_ns)
+                msg.status.append(status)
+                continue
             values = {
                 name: "unknown" for name in ("enabled",) + fault_fields + numeric_fields
             }
@@ -212,6 +243,37 @@ class FoldRosNode(Node):
             status.values = [KeyValue(key=key, value=value) for key, value in values.items()]
             msg.status.append(status)
         self._status_pub.publish(msg)
+
+    def _fill_rb200_status(self, status: DiagnosticStatus, motor, now_ns: int) -> None:
+        values = {name: "unknown" for name in ("enabled", "cia402_state") + RB200_STATUS_BITS}
+        values["quick_stop_active"] = "unknown"
+        values["error_code"] = "unknown"
+        values["status_word"] = "unknown"
+        values["control_mode"] = "pos"
+        feedback = motor.get_low_speed_feedback()
+        if feedback is not None:
+            age = (now_ns - feedback.timestamp_ns) / 1e9
+            if feedback.timestamp_ns > 0 and 0.0 <= age <= self._status_timeout:
+                bits = feedback.status
+                state = cia402_state(feedback.status_word)
+                values["enabled"] = str(bits.operation_enabled).lower()
+                values["cia402_state"] = state
+                for name in RB200_STATUS_BITS:
+                    values[name] = str(getattr(bits, name)).lower()
+                values["quick_stop_active"] = str(state == "quick_stop_active").lower()
+                values["error_code"] = "0x%04X" % feedback.error_code
+                values["status_word"] = "0x%04X" % feedback.status_word
+                status.level = DiagnosticStatus.OK
+                status.message = state
+                if bits.fault:
+                    status.level = DiagnosticStatus.ERROR
+                    status.message = "%s, error_code 0x%04X" % (state, feedback.error_code)
+                elif bits.warning:
+                    status.level = DiagnosticStatus.WARN
+                    status.message = "%s, warning" % state
+            else:
+                status.message = "low-speed feedback timestamp invalid or expired"
+        status.values = [KeyValue(key=key, value=value) for key, value in values.items()]
 
     def _publish_feedback(self) -> None:
         msg = JointState()
@@ -251,7 +313,7 @@ class FoldRosNode(Node):
 
         for idx, name in enumerate(msg.name):
             index = self._joint_by_name.get(name)
-            if index is None or index == ArmJointGroup.INVALID_JOINT_INDEX:
+            if index is None or index == JointGroup.INVALID_JOINT_INDEX:
                 self.get_logger().debug("skip unknown joint: %s" % name)
                 continue
 

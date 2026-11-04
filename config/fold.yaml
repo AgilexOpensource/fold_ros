@@ -3,6 +3,7 @@
 
 torso:
   can_channel: can0
+  protocol: rb200
   profile_vel: 3.0
   profile_accel: 5.0
   profile_decel: 5.0
