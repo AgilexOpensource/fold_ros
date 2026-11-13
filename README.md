@@ -1,47 +1,64 @@
 # fold_ros
 
-ROS 2 driver for the 4-DOF fold module (RB200 protocol) with profile position
-control.
+[中文](README.zh-CN.md)
 
-> **Safety:** Default startup configures and enables the motors and accepts
-> commands. Check wiring, node IDs, calibration, limits and mechanical clearance
-> first, and provide an independent emergency stop.
+ROS 2 driver for the 4-DOF fold module (RB200 protocol) with profile position control, built on [agx_motor_sdk](https://github.com/kehuanjack/agx_motor_sdk).
 
-## Installation
+> **Safety:** Default startup configures and enables the motors and accepts commands. Check wiring, node IDs, calibration, limits and mechanical clearance first, and provide an independent emergency stop.
 
-Use a terminal with your ROS 2 environment active, colcon, and Python pip.
+## Requirements
+
+Tested on Ubuntu 22.04 with ROS 2 Humble.
+
+## Install
+
+The SDK compiles a C++ extension during install, so install the build tools first:
 
 ```bash
-python3 -m pip install git+https://github.com/kehuanjack/agx_motor_sdk.git
-mkdir -p ~/fold_ws/src
-cd ~/fold_ws
+sudo apt install build-essential cmake libasio-dev libyaml-cpp-dev python3-dev
+mkdir -p ~/fold_ws/src && cd ~/fold_ws
 git clone https://github.com/AgilexOpensource/fold_ros.git src/fold_ros
+source /opt/ros/humble/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+```
+
+Install the SDK with system pip and build:
+
+```bash
+pip3 install git+https://github.com/kehuanjack/agx_motor_sdk.git
 colcon build --packages-select fold_ros
 source install/setup.bash
 ```
 
-## Launch
+Or, recommended to keep the system Python clean, a virtual environment that still sees the ROS Python packages:
 
-The default configuration uses `can0` at 1 Mbit/s. Activate it with the
-interface down; do not reconfigure an adapter in use.
+```bash
+python3 -m venv --system-site-packages ~/fold_ws/.venv
+source ~/fold_ws/.venv/bin/activate
+pip install git+https://github.com/kehuanjack/agx_motor_sdk.git
+python3 -m colcon build --packages-select fold_ros
+source install/setup.bash
+```
+
+Activate the venv in every new terminal before `source install/setup.bash`. `python3 -m colcon` makes the node use the venv Python; plain `colcon` would use the system Python, which cannot import `agx_motor_sdk` from the venv.
+
+## Quick start
+
+Bring up `can0` at 1 Mbit/s and launch the driver. Run `ip link set` only while the interface is down and unused.
 
 ```bash
 sudo ip link set can0 up type can bitrate 1000000
 ros2 launch fold_ros fold.launch.py
 ```
 
-The node is `/fold/fold_node` with joints `torso_joint1` through `torso_joint4`. For a connection check
-without configure, enable or external commands:
+The node is `/fold/fold_node` with joints `torso_joint1` through `torso_joint4`, all on `can0`. To check the connection without configuring, enabling or accepting commands:
 
 ```bash
 ros2 launch fold_ros fold.launch.py \
   auto_configure:=false auto_enable:=false control_enabled:=false
 ```
 
-## Control and Feedback
-
-Run commands in another terminal with ROS 2 and the workspace loaded.
-**Commands can move the joints.** The examples command `torso_joint1` to 0.
+In another terminal, read feedback and send a position target. **Commands move the joints.**
 
 ```bash
 ros2 topic echo /fold/feedback/joint_states
@@ -50,117 +67,68 @@ ros2 topic pub --once /fold/control/joint_states sensor_msgs/msg/JointState \
   "{name: ['torso_joint1'], position: [0.0]}"
 ```
 
-`enable` switches motor enable; `control_enable` opens or closes the software
-command gate:
+Close the command gate, then disable the motors:
 
 ```bash
-ros2 service call /fold/enable std_srvs/srv/SetBool '{data: true}'
-ros2 service call /fold/control_enable std_srvs/srv/SetBool '{data: true}'
 ros2 service call /fold/control_enable std_srvs/srv/SetBool '{data: false}'
 ros2 service call /fold/enable std_srvs/srv/SetBool '{data: false}'
 ```
 
-Names below are relative to the namespace (default `/fold`). Topics use
-reliable, volatile QoS with depth 10.
+## Interfaces
 
-| Direction | Name | Type |
-|---|---|---|
-| Subscribe | `control/joint_states` | `sensor_msgs/JointState` |
-| Publish | `feedback/joint_states` | `sensor_msgs/JointState` |
-| Publish | `feedback/motor_status` | `diagnostic_msgs/DiagnosticArray` |
-| Service | `enable` | `std_srvs/SetBool` |
-| Service | `control_enable` | `std_srvs/SetBool` |
+Names are relative to the node namespace (default `/fold`). Topics use reliable, volatile QoS with depth 10.
+
+| Name | Kind | Type | Description |
+|---|---|---|---|
+| `control/joint_states` | Subscribed topic | `sensor_msgs/msg/JointState` | Joint targets |
+| `feedback/joint_states` | Published topic | `sensor_msgs/msg/JointState` | Joint feedback at `feedback_rate` |
+| `feedback/motor_status` | Published topic | `diagnostic_msgs/msg/DiagnosticArray` | One status per joint at `status_rate` |
+| `enable` | Service | `std_srvs/srv/SetBool` | Enable or disable the motors |
+| `control_enable` | Service | `std_srvs/srv/SetBool` | Open or close the command gate |
 
 Command rules:
 
-- `name` and `position` must be nonempty, equal length, with no duplicate names.
-  Subsets are allowed; unknown joints are skipped.
-- Only `position` is used; velocity/effort are ignored.
-- Used values must be finite; an invalid packet is rejected before sending.
-  Writes are per joint; a failed write is logged and other joints continue.
-- Command headers are ignored; there is no age check or acknowledgment.
+- `name` and `position` must be nonempty, the same length and free of duplicates. Subsets are allowed; unknown joints are skipped.
+- Used values must be finite; an invalid message is rejected as a whole. A failed write is logged and other joints continue.
+- Only `position` is used. The first target for each joint also selects profile position mode; later targets leave the mode unchanged. Disabling through the `enable` service resets this.
+- Headers are ignored; there is no age check or acknowledgment.
 
-Joint feedback is published from cached SDK snapshots at `feedback_rate`.
-Missing joints are omitted.
+Units are rad, rad/s and N·m.
 
-## Fold Behavior
-
-**Position control only; MIT is not supported.** There is no `control_mode`
-parameter. Command positions use rad. The first target per joint selects
-position mode, later targets keep the mode unchanged, and disabling resets this
-tracking. YAML `torque_limit` is not applied; check hardware protection
-separately.
+Joints without SDK state are left out of `feedback/joint_states`. The `motor_status` fields are listed in [docs/reference.md](docs/reference.md#diagnostics).
 
 ## Configuration
 
-- [fold.yaml](config/fold.yaml): module `torso`, `torso_joint1` through
-  `torso_joint4` (IDs 1 through 4), polarity, limits, profile settings and `torque_b`.
-- [fold_ros.yaml](config/fold_ros.yaml): startup parameters, including
-  `module_key: torso`.
+- [config/fold.yaml](config/fold.yaml): hardware module `torso` with `torso_joint1` through `torso_joint4` (IDs 1 to 4), polarity, limits, profile and `torque_b`. See the [SDK YAML reference](https://github.com/kehuanjack/agx_motor_sdk/blob/main/YAML_CONFIG.md).
+- [config/fold_ros.yaml](config/fold_ros.yaml): node parameters, listed in [docs/reference.md](docs/reference.md#ros-parameters).
 
-To change the CAN interface, update any explicit per-joint `can_channel` fields too.
+Launch arguments (empty keeps the value from `params_file`):
 
-### Hardware YAML
-
-Relative `yaml_path` values resolve under the installed `share/fold_ros/config`;
-use absolute paths for external files (`package://` is not supported). An empty
-`yaml_path` checks `FOLD_ROS_CONFIG`, then `fold.yaml`. For `fold.yaml` the module key defaults to `torso`. See the
-[SDK YAML reference](https://github.com/kehuanjack/agx_motor_sdk/blob/main/YAML_CONFIG.md).
-
-### ROS parameters
-
-| Parameter | Node default | Meaning |
+| Argument | Default | Description |
 |---|---|---|
-| `yaml_path` | empty | Hardware YAML; `fold_ros.yaml` sets `fold.yaml` |
-| `module_key` | empty | Top-level YAML module; inferred from the file stem when empty |
-| `can_channel` | empty | Override the YAML CAN interface |
-| `auto_configure` | `true` | Configure the joint group at startup |
-| `auto_enable` | `true` | Enable motors at startup |
-| `control_enabled` | `true` | Initial software command gate |
-| `feedback_rate` | `100.0` | Joint feedback rate, Hz |
-| `status_rate` | `2.0` | Diagnostics rate, Hz |
-| `status_timeout` | `2.0` | Low-speed feedback freshness bound, s |
+| `namespace` | `fold` | Node namespace |
+| `params_file` | `config/fold_ros.yaml` | Node parameter file |
+| `yaml_path` | empty | Hardware YAML path |
+| `module_key` | empty | Top-level YAML module |
+| `can_channel` | empty | CAN interface override |
+| `control_enabled` | empty | Initial command gate, `true` or `false` |
+| `auto_configure`, `auto_enable` | empty | Configure and enable at startup, `true` or `false` |
+| `feedback_rate`, `status_rate` | empty | Publish rates, Hz |
+| `status_timeout` | empty | Diagnostics freshness bound, s |
 
-Rates and timeout must be finite and positive. All parameters are read-only after startup.
-Enable/disable frames are always sent 0.1 s apart per joint.
-The gate parameter keeps its startup value; `control_enable` changes the live gate.
-Launch accepts these overrides plus `namespace` and `params_file`; empty values
-keep the parameter file. List them with
-`ros2 launch fold_ros fold.launch.py --show-args`.
+`ros2 launch fold_ros fold.launch.py --show-args` lists them. Hardware YAML lookup and operating boundaries are in [docs/reference.md](docs/reference.md).
 
-### Diagnostics
+## Troubleshooting
 
-`/fold/feedback/motor_status` is one `DiagnosticArray` per publish with one
-`DiagnosticStatus` per joint: `name` is the joint name and `hardware_id` is
-`<can_channel>:<node_id>`. Values are strings.
-
-RB200 joints publish the CiA 402 status word decoded by bit and by drive state:
-
-| Fields | Meaning |
-|---|---|
-| `enabled` | Operation-enabled bit (bit 2) |
-| `cia402_state` | `not_ready_to_switch_on`, `switch_on_disabled`, `ready_to_switch_on`, `switched_on`, `operation_enabled`, `quick_stop_active`, `fault_reaction_active` or `fault` |
-| `ready_to_switch_on`, `switched_on`, `fault`, `voltage_enabled`, `switch_on_disabled`, `warning`, `remote`, `target_reached`, `internal_limit_active`, `homing_complete` | Status word bits 0, 1, 3, 4, 6, 7, 9, 10, 11, 15 |
-| `quick_stop_active` | `true` in the quick-stop-active state |
-| `error_code` | Raw RB200 error code, hex (`0x8130`) |
-| `status_word` | Raw status word, hex (`0x1637`) |
-| `control_mode` | `pos` |
-
-The fault bit gives `ERROR` with the error code in the message; the warning
-bit gives `WARN`; otherwise the message is the drive state.
-
-Fresh, fault-free status is `OK`, even when disabled. Missing, nonpositive,
-future or expired timestamps give `STALE` with values `unknown`. Freshness is
-`0 <= age <= status_timeout` on host wall-clock time.
-
-### Operating boundaries
-
-- Closing the command gate does not disable motors or cancel sent targets.
-- Stale diagnostics do not stop commands or expire cached joint feedback.
-- Node exit closes the SDK connection without explicitly disabling motors.
-- The enable service reports the SDK result; check diagnostics for hardware state.
-- Provide watchdogs, trajectory execution and recovery upstream.
+- `No module named 'agx_motor_sdk'`: activate the venv and rebuild with `python3 -m colcon build`.
+- `failed to open CAN: can0`: bring the interface up as in [Quick start](#quick-start) and check `ip -brief link show`.
+- `fold YAML not found`: pass an absolute `yaml_path`, or a file name installed under `share/fold_ros/config`.
+- `fold configure failed` or `fold enable failed`: check power, wiring and node IDs, then run the connection check.
+- Log says `External control gate is closed`: call `control_enable` with `{data: true}`.
+- Log says `set_target failed for torso_joint1`: check power, CAN and the enable state of that joint.
+- Log says `control/joint_states ignored`: fix the message as described in the command rules.
+- `motor_status` entries are `STALE`: no fresh feedback within `status_timeout`; check power and CAN.
 
 ## License
 
-Apache-2.0; see `LICENSE`.
+Apache-2.0, see [LICENSE](LICENSE).
