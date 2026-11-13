@@ -120,6 +120,7 @@ Launch arguments (empty keeps the value from `params_file`):
 
 ## Troubleshooting
 
+- `GitHub release metadata request failed` while installing `agx_motor_sdk`: the SDK downloads protocol libraries from GitHub, and anonymous access allows 60 API requests per hour per IP. Wait for the limit to reset, or set `GITHUB_TOKEN` to a GitHub token and install again.
 - `No module named 'agx_motor_sdk'`: activate the venv and rebuild with `python3 -m colcon build`.
 - `failed to open CAN: can0`: bring the interface up as in [Quick start](#quick-start) and check `ip -brief link show`.
 - `fold YAML not found`: pass an absolute `yaml_path`, or a file name installed under `share/fold_ros/config`.

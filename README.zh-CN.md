@@ -120,6 +120,7 @@ ros2 service call /fold/enable std_srvs/srv/SetBool '{data: false}'
 
 ## 常见问题
 
+- 安装 `agx_motor_sdk` 时报 `GitHub release metadata request failed`：SDK 安装时会从 GitHub 下载协议库，匿名访问每个 IP 每小时只能请求 60 次 API。等限额重置，或把 `GITHUB_TOKEN` 设为 GitHub token 后重装。
 - `No module named 'agx_motor_sdk'`：激活虚拟环境，并用 `python3 -m colcon build` 重新构建。
 - `failed to open CAN: can0`：按[快速开始](#快速开始)启用接口，并用 `ip -brief link show` 检查。
 - `fold YAML not found`：传入绝对路径的 `yaml_path`，或安装在 `share/fold_ros/config` 下的文件名。

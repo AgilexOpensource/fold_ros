@@ -9,7 +9,6 @@
   <maintainer email="contact@agilex.ai">Agilex Robotics</maintainer>
   <license>Apache-2.0</license>
 
-  <buildtool_depend>ament_python</buildtool_depend>
   <depend>rclpy</depend>
   <depend>rcl_interfaces</depend>
   <depend>diagnostic_msgs</depend>
