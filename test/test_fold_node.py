@@ -261,7 +261,7 @@ def test_startup_parameters_readonly_and_default_rates(fold_node, monkeypatch):
     node = fold_node.FoldRosNode()
     assert len(node.descriptors) == 9
     assert all(descriptor.read_only for descriptor in node.descriptors.values())
-    assert [period for period, _ in node.timers] == [0.01, 0.5]
+    assert [period for period, _ in node.timers] == [0.01, 1.0 / 30.0]
 
 
 def test_enable_uses_frame_interval(fold_node, monkeypatch):

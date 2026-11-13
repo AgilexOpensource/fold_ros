@@ -110,7 +110,7 @@ class FoldRosNode(Node):
             "auto_configure": True,
             "auto_enable": True,
             "feedback_rate": 100.0,
-            "status_rate": 2.0,
+            "status_rate": 30.0,
             "status_timeout": 2.0,
             "control_enabled": True,
         }

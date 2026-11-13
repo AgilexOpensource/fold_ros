@@ -15,7 +15,7 @@ Parameters, launch arguments, command rules, hardware YAML, diagnostics, operati
 | `auto_enable` | `true` | Enable the motors at startup |
 | `control_enabled` | `true` | Initial command gate |
 | `feedback_rate` | `100.0` | Joint feedback rate, Hz |
-| `status_rate` | `2.0` | Diagnostics rate, Hz |
+| `status_rate` | `30.0` | Diagnostics rate, Hz |
 | `status_timeout` | `2.0` | Diagnostics freshness bound, s |
 
 - Rates and `status_timeout` must be finite and greater than 0.
@@ -74,6 +74,8 @@ Field meanings are in the [SDK YAML reference](https://github.com/kehuanjack/agx
 The `fault` bit gives `ERROR` with message `<state>, error_code 0x....`; the `warning` bit gives `WARN`. Otherwise the status is `OK` with the drive state as message.
 
 Missing, nonpositive, future or expired timestamps give `STALE` with values `unknown`. Fresh means `0 <= age <= status_timeout` on the host wall clock.
+
+30 Hz diagnostics republish cached low-speed feedback; they do not create new hardware samples or change firmware CAN emission rates. Freshness still uses the source timestamp and the unchanged 2-second default timeout.
 
 ## Operating boundaries
 
