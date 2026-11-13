@@ -2,7 +2,7 @@
 
 [English](reference.md)
 
-`fold_node` 的参数、硬件 YAML、诊断和运行边界。入门请先看 [README](../README.zh-CN.md)。
+`fold_node` 的参数、启动参数、指令规则、硬件 YAML、诊断、运行边界和常见问题。入门请先看 [README](../README.zh-CN.md)。
 
 ## ROS 参数
 
@@ -22,6 +22,31 @@
 - 所有参数在启动后只读。
 - `control_enabled` 保持启动值；`control_enable` 服务修改实际门控。
 - 逐关节使能和失能帧之间间隔 0.1 s。
+
+## 启动参数
+
+`fold.launch.py` 为上表中每个参数提供同名启动参数，另有：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `namespace` | `fold` | 节点命名空间 |
+| `params_file` | `config/fold_ros.yaml` | 节点参数文件 |
+
+- 参数类启动参数默认为空，留空则使用 `params_file` 中的值。
+- `control_enabled`、`auto_configure` 和 `auto_enable` 取 `true` 或 `false`。
+
+## 指令与反馈
+
+`control/joint_states` 消息的规则：
+
+- `name` 和 `position` 必须非空、长度相同且无重复。可以只发部分关节；未知关节会被跳过。
+- 用到的值必须有限；无效消息整条拒绝。单个关节写入失败会记录日志，其他关节继续执行。
+- 只使用 `position`。每个关节的第一个目标同时选择轮廓位置模式，后续目标不改变模式。通过 `enable` 服务失能后会重置这一状态。
+- 忽略消息头；不检查时效，也没有应答。
+
+单位为 rad、rad/s 和 N·m。
+
+没有 SDK 状态的关节不出现在 `feedback/joint_states` 中。
 
 ## 硬件 YAML
 
@@ -57,3 +82,11 @@
 - 节点退出时关闭 SDK 连接，但不失能电机。
 - `enable` 服务返回 SDK 的结果；硬件实际状态请看 `motor_status`。
 - 看门狗、轨迹执行和故障恢复应由本驱动的上层负责。
+
+## 常见问题
+
+- `fold YAML not found`：传入绝对路径的 `yaml_path`，或安装在 `share/fold_ros/config` 下的文件名。
+- `fold configure failed` 或 `fold enable failed`：检查供电、接线和节点 ID，再运行[连接检查](../README.zh-CN.md#快速开始)。
+- 日志显示 `set_target failed for torso_joint1`：检查该关节的供电、CAN 和使能状态。
+- 日志显示 `control/joint_states ignored`：按[指令与反馈](#指令与反馈)中的规则修正消息。
+- `motor_status` 条目为 `STALE`：`status_timeout` 内没有新的反馈；检查供电和 CAN。

@@ -2,7 +2,7 @@
 
 [中文](reference.zh-CN.md)
 
-Parameters, hardware YAML, diagnostics and operating boundaries of `fold_node`. Start with the [README](../README.md).
+Parameters, launch arguments, command rules, hardware YAML, diagnostics, operating boundaries and troubleshooting of `fold_node`. Start with the [README](../README.md).
 
 ## ROS parameters
 
@@ -22,6 +22,31 @@ Parameters, hardware YAML, diagnostics and operating boundaries of `fold_node`. 
 - All parameters are read-only after startup.
 - `control_enabled` keeps its startup value; the `control_enable` service changes the live gate.
 - Per-joint enable and disable frames are sent 0.1 s apart.
+
+## Launch arguments
+
+`fold.launch.py` takes each parameter above as a launch argument of the same name, plus:
+
+| Argument | Default | Description |
+|---|---|---|
+| `namespace` | `fold` | Node namespace |
+| `params_file` | `config/fold_ros.yaml` | Node parameter file |
+
+- Parameter arguments default to empty, which keeps the value from `params_file`.
+- `control_enabled`, `auto_configure` and `auto_enable` take `true` or `false`.
+
+## Commands and feedback
+
+Rules for messages on `control/joint_states`:
+
+- `name` and `position` must be nonempty, the same length and free of duplicates. Subsets are allowed; unknown joints are skipped.
+- Used values must be finite; an invalid message is rejected as a whole. A failed write is logged and other joints continue.
+- Only `position` is used. The first target for each joint also selects profile position mode; later targets leave the mode unchanged. Disabling through the `enable` service resets this.
+- Headers are ignored; there is no age check or acknowledgment.
+
+Units are rad, rad/s and N·m.
+
+Joints without SDK state are left out of `feedback/joint_states`.
 
 ## Hardware YAML
 
@@ -57,3 +82,11 @@ Missing, nonpositive, future or expired timestamps give `STALE` with values `unk
 - Node exit closes the SDK connection without disabling the motors.
 - The `enable` service reports the SDK result; read `motor_status` for the hardware state.
 - Watchdogs, trajectory execution and fault recovery belong upstream of this driver.
+
+## Troubleshooting
+
+- `fold YAML not found`: pass an absolute `yaml_path`, or a file name installed under `share/fold_ros/config`.
+- `fold configure failed` or `fold enable failed`: check power, wiring and node IDs, then run the [connection check](../README.md#quick-start).
+- Log says `set_target failed for torso_joint1`: check power, CAN and the enable state of that joint.
+- Log says `control/joint_states ignored`: fix the message as described in [Commands and feedback](#commands-and-feedback).
+- `motor_status` entries are `STALE`: no fresh feedback within `status_timeout`; check power and CAN.

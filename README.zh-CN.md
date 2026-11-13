@@ -12,10 +12,13 @@
 
 ## 安装
 
-SDK 安装时会编译 C++ 扩展，需先安装构建工具：
+SDK 安装时会编译 C++ 扩展，需先安装构建工具及 Python 和 ROS 工具。`rosdep init` 仅在本机从未执行过时运行：
 
 ```bash
-sudo apt install build-essential cmake libasio-dev libyaml-cpp-dev python3-dev
+sudo apt install build-essential cmake libasio-dev libyaml-cpp-dev python3-dev \
+  python3-pip python3-venv python3-colcon-common-extensions python3-rosdep
+[ -f /etc/ros/rosdep/sources.list.d/20-default.list ] || sudo rosdep init
+rosdep update
 mkdir -p ~/fold_ws/src && cd ~/fold_ws
 git clone https://github.com/AgilexOpensource/fold_ros.git src/fold_ros
 source /opt/ros/humble/setup.bash
@@ -61,8 +64,8 @@ ros2 launch fold_ros fold.launch.py \
 在另一个终端读取反馈并发送位置目标。**指令会让关节运动。**
 
 ```bash
-ros2 topic echo /fold/feedback/joint_states
-ros2 topic echo /fold/feedback/motor_status
+ros2 topic echo --once /fold/feedback/joint_states
+ros2 topic echo --once /fold/feedback/motor_status
 ros2 topic pub --once /fold/control/joint_states sensor_msgs/msg/JointState \
   "{name: ['torso_joint1'], position: [0.0]}"
 ```
@@ -86,49 +89,31 @@ ros2 service call /fold/enable std_srvs/srv/SetBool '{data: false}'
 | `enable` | 服务 | `std_srvs/srv/SetBool` | 使能或失能电机 |
 | `control_enable` | 服务 | `std_srvs/srv/SetBool` | 打开或关闭指令门控 |
 
-指令规则：
-
-- `name` 和 `position` 必须非空、长度相同且无重复。可以只发部分关节；未知关节会被跳过。
-- 用到的值必须有限；无效消息整条拒绝。单个关节写入失败会记录日志，其他关节继续执行。
-- 只使用 `position`。每个关节的第一个目标同时选择轮廓位置模式，后续目标不改变模式。通过 `enable` 服务失能后会重置这一状态。
-- 忽略消息头；不检查时效，也没有应答。
-
-单位为 rad、rad/s 和 N·m。
-
-没有 SDK 状态的关节不出现在 `feedback/joint_states` 中。`motor_status` 字段见 [docs/reference.zh-CN.md](docs/reference.zh-CN.md#诊断)。
+指令规则和单位见 [docs/reference.zh-CN.md](docs/reference.zh-CN.md#指令与反馈)；`motor_status` 字段见 [docs/reference.zh-CN.md](docs/reference.zh-CN.md#诊断)。
 
 ## 配置
 
 - [config/fold.yaml](config/fold.yaml)：硬件模块 `torso`，包含 `torso_joint1` 到 `torso_joint4`（ID 1 到 4）、极性、限位、运动曲线和 `torque_b`。字段见 [SDK YAML 参考](https://github.com/kehuanjack/agx_motor_sdk/blob/main/YAML_CONFIG.md)。
 - [config/fold_ros.yaml](config/fold_ros.yaml)：节点参数，见 [docs/reference.zh-CN.md](docs/reference.zh-CN.md#ros-参数)。
 
-启动参数（留空则使用 `params_file` 中的值）：
+常用启动参数（留空则使用 `params_file` 中的值）：
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `namespace` | `fold` | 节点命名空间 |
-| `params_file` | `config/fold_ros.yaml` | 节点参数文件 |
-| `yaml_path` | 空 | 硬件 YAML 路径 |
-| `module_key` | 空 | YAML 顶层模块名 |
 | `can_channel` | 空 | 覆盖 CAN 接口 |
 | `control_enabled` | 空 | 初始指令门控，`true` 或 `false` |
 | `auto_configure`, `auto_enable` | 空 | 启动时配置和使能，`true` 或 `false` |
-| `feedback_rate`, `status_rate` | 空 | 发布频率，Hz |
-| `status_timeout` | 空 | 诊断新鲜度上限，s |
 
-`ros2 launch fold_ros fold.launch.py --show-args` 可列出全部参数。硬件 YAML 查找和运行边界见 [docs/reference.zh-CN.md](docs/reference.zh-CN.md)。
+`ros2 launch fold_ros fold.launch.py --show-args` 可列出全部参数。完整的参数和启动参数列表、硬件 YAML 查找和运行边界见 [docs/reference.zh-CN.md](docs/reference.zh-CN.md)。
 
 ## 常见问题
 
 - 安装 `agx_motor_sdk` 时报 `GitHub release metadata request failed`：SDK 安装时会从 GitHub 下载协议库，匿名访问每个 IP 每小时只能请求 60 次 API。等限额重置，或把 `GITHUB_TOKEN` 设为 GitHub token 后重装。
 - `No module named 'agx_motor_sdk'`：激活虚拟环境，并用 `python3 -m colcon build` 重新构建。
 - `failed to open CAN: can0`：按[快速开始](#快速开始)启用接口，并用 `ip -brief link show` 检查。
-- `fold YAML not found`：传入绝对路径的 `yaml_path`，或安装在 `share/fold_ros/config` 下的文件名。
-- `fold configure failed` 或 `fold enable failed`：检查供电、接线和节点 ID，再运行连接检查。
 - 日志显示 `External control gate is closed`：调用 `control_enable`，参数为 `{data: true}`。
-- 日志显示 `set_target failed for torso_joint1`：检查该关节的供电、CAN 和使能状态。
-- 日志显示 `control/joint_states ignored`：按指令规则修正消息。
-- `motor_status` 条目为 `STALE`：`status_timeout` 内没有新的反馈；检查供电和 CAN。
+
+其他问题见 [docs/reference.zh-CN.md](docs/reference.zh-CN.md#常见问题)。
 
 ## 许可证
 
