@@ -197,7 +197,6 @@ class FoldRosNode(Node):
     def _publish_status(self) -> None:
         msg = DiagnosticArray()
         msg.header.stamp = self.get_clock().now().to_msg()
-        now_ns = time.time_ns()
         fault_fields = (
             "undervoltage", "motor_overtemp", "driver_overcurrent",
             "driver_overtemp", "collision_tripped", "driver_error", "stall_tripped",
@@ -213,7 +212,7 @@ class FoldRosNode(Node):
             status.level = DiagnosticStatus.STALE
             status.message = "low-speed feedback unavailable"
             if getattr(motor, "protocol", "arm") == "rb200":
-                self._fill_rb200_status(status, motor, now_ns)
+                self._fill_rb200_status(status, motor)
                 msg.status.append(status)
                 continue
             values = {
@@ -222,7 +221,8 @@ class FoldRosNode(Node):
             values["control_mode"] = "pos"
             feedback = motor.get_low_speed_feedback()
             if feedback is not None:
-                age = (now_ns - feedback.timestamp_ns) / 1e9
+                # Read the clock after the cache; the CAN thread may update it at any time.
+                age = (time.time_ns() - feedback.timestamp_ns) / 1e9
                 if feedback.timestamp_ns > 0 and 0.0 <= age <= self._status_timeout:
                     values["enabled"] = str(feedback.status.enabled).lower()
                     faults = []
@@ -244,7 +244,7 @@ class FoldRosNode(Node):
             msg.status.append(status)
         self._status_pub.publish(msg)
 
-    def _fill_rb200_status(self, status: DiagnosticStatus, motor, now_ns: int) -> None:
+    def _fill_rb200_status(self, status: DiagnosticStatus, motor) -> None:
         values = {name: "unknown" for name in ("enabled", "cia402_state") + RB200_STATUS_BITS}
         values["quick_stop_active"] = "unknown"
         values["error_code"] = "unknown"
@@ -252,7 +252,7 @@ class FoldRosNode(Node):
         values["control_mode"] = "pos"
         feedback = motor.get_low_speed_feedback()
         if feedback is not None:
-            age = (now_ns - feedback.timestamp_ns) / 1e9
+            age = (time.time_ns() - feedback.timestamp_ns) / 1e9
             if feedback.timestamp_ns > 0 and 0.0 <= age <= self._status_timeout:
                 bits = feedback.status
                 state = cia402_state(feedback.status_word)

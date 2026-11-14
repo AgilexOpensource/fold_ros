@@ -159,7 +159,9 @@ def publish_status(module, feedbacks):
     motors = [
         SimpleNamespace(
             can_channel="can%d" % index, node_id=index + 1,
-            get_low_speed_feedback=lambda feedback=feedback: feedback,
+            get_low_speed_feedback=(
+                feedback if callable(feedback) else (lambda feedback=feedback: feedback)
+            ),
         )
         for index, feedback in enumerate(feedbacks)
     ]
@@ -313,7 +315,9 @@ def publish_rb200_status(module, feedbacks):
     motors = [
         SimpleNamespace(
             can_channel="can0", node_id=index + 1, protocol="rb200",
-            get_low_speed_feedback=lambda feedback=feedback: feedback,
+            get_low_speed_feedback=(
+                feedback if callable(feedback) else (lambda feedback=feedback: feedback)
+            ),
         )
         for index, feedback in enumerate(feedbacks)
     ]
@@ -378,3 +382,30 @@ def test_rb200_status_bits_and_error_code(fold_node):
     assert values[2]["warning"] == "true"
     assert values[3]["cia402_state"] == "quick_stop_active"
     assert values[3]["quick_stop_active"] == "true"
+
+
+def make_receive_then_read(module, monkeypatch, make):
+    clock = [10_000_000_000]
+    monkeypatch.setattr(module.time, "time_ns", lambda: clock[0])
+
+    def receive_then_read():
+        clock[0] += 1_000
+        return make(clock[0])
+
+    return receive_then_read
+
+
+def test_frame_cached_during_publish_is_fresh(fold_node, monkeypatch):
+    read = make_receive_then_read(
+        fold_node, monkeypatch, lambda stamp: make_feedback(timestamp_ns=stamp)
+    )
+    statuses = publish_status(fold_node, [read, read])
+    assert [status.level for status in statuses] == [DiagnosticStatus.OK] * 2
+
+
+def test_rb200_frame_cached_during_publish_is_fresh(fold_node, monkeypatch):
+    read = make_receive_then_read(
+        fold_node, monkeypatch, lambda stamp: make_rb200_feedback(0x0637, stamp)
+    )
+    statuses = publish_rb200_status(fold_node, [read, read])
+    assert [status.level for status in statuses] == [DiagnosticStatus.OK] * 2
