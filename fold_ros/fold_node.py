@@ -5,7 +5,7 @@ import math
 import os
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
@@ -146,6 +146,7 @@ class FoldRosNode(Node):
         self._position_mode_sent: Dict[str, bool] = {
             name: False for name in self._joint_names
         }
+        self._disabled_logged: Set[str] = set()
 
         try:
             if not self._group.connect():
@@ -317,17 +318,38 @@ class FoldRosNode(Node):
                 self.get_logger().debug("skip unknown joint: %s" % name)
                 continue
 
+            motor = self._group.motor(index)
+            if not self._motor_enabled(motor):
+                # A disabled RB200 that receives targets drops in and out of operation_enabled, so
+                # commands wait for the enable service; position mode is re-sent once enabled.
+                self._position_mode_sent[name] = False
+                if name not in self._disabled_logged:
+                    self.get_logger().warn("control/joint_states ignored for %s: motor not enabled" % name)
+                    self._disabled_logged.add(name)
+                continue
+            self._disabled_logged.discard(name)
             position = float(msg.position[idx])
             mode = (
                 TARGET_MODE_UNCHANGED
                 if self._position_mode_sent.get(name)
                 else TARGET_MODE_POSITION
             )
-            motor = self._group.motor(index)
             if not motor.set_target(position, mode):
                 self.get_logger().warn("set_target failed for %s" % name)
             elif mode == TARGET_MODE_POSITION:
                 self._position_mode_sent[name] = True
+
+    def _motor_enabled(self, motor) -> bool:
+        """True when fresh low-speed feedback reports the motor enabled."""
+        feedback = motor.get_low_speed_feedback()
+        if feedback is None or feedback.timestamp_ns <= 0:
+            return False
+        age = (time.time_ns() - feedback.timestamp_ns) / 1e9
+        if not 0.0 <= age <= self._status_timeout:
+            return False
+        if getattr(motor, "protocol", "arm") == "rb200":
+            return bool(feedback.status.operation_enabled)
+        return bool(feedback.status.enabled)
 
     def _on_control_enable(
         self, request: SetBool.Request, response: SetBool.Response

@@ -83,7 +83,7 @@ Names are relative to the node namespace (default `/fold`). Topics use reliable,
 
 | Name | Kind | Type | Description |
 |---|---|---|---|
-| `control/joint_states` | Subscribed topic | `sensor_msgs/msg/JointState` | Joint targets |
+| `control/joint_states` | Subscribed topic | `sensor_msgs/msg/JointState` | Joint targets; dropped for joints whose motor is not enabled |
 | `feedback/joint_states` | Published topic | `sensor_msgs/msg/JointState` | Joint feedback at `feedback_rate` |
 | `feedback/motor_status` | Published topic | `diagnostic_msgs/msg/DiagnosticArray` | One status per joint at `status_rate` |
 | `enable` | Service | `std_srvs/srv/SetBool` | Enable or disable the motors |
@@ -112,6 +112,7 @@ Common launch arguments (empty keeps the value from `params_file`):
 - `No module named 'agx_motor_sdk'`: activate the venv and rebuild with `python3 -m colcon build`.
 - `failed to open CAN: can0`: bring the interface up as in [Quick start](#quick-start) and check `ip -brief link show`.
 - Log says `External control gate is closed`: call `control_enable` with `{data: true}`.
+- Log says `motor not enabled`: call `enable` with `{data: true}` first. Targets sent to a disabled RB200 make it drop in and out of operation_enabled, so they are not forwarded.
 
 Other symptoms are in [docs/reference.md](docs/reference.md#troubleshooting).
 

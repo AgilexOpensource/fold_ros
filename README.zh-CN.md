@@ -83,7 +83,7 @@ ros2 service call /fold/enable std_srvs/srv/SetBool '{data: false}'
 
 | 名称 | 类别 | 类型 | 说明 |
 |---|---|---|---|
-| `control/joint_states` | 订阅话题 | `sensor_msgs/msg/JointState` | 关节目标 |
+| `control/joint_states` | 订阅话题 | `sensor_msgs/msg/JointState` | 关节目标；电机未使能的关节会被丢弃 |
 | `feedback/joint_states` | 发布话题 | `sensor_msgs/msg/JointState` | 按 `feedback_rate` 发布的关节反馈 |
 | `feedback/motor_status` | 发布话题 | `diagnostic_msgs/msg/DiagnosticArray` | 按 `status_rate` 发布，每关节一条状态 |
 | `enable` | 服务 | `std_srvs/srv/SetBool` | 使能或失能电机 |
@@ -112,6 +112,7 @@ ros2 service call /fold/enable std_srvs/srv/SetBool '{data: false}'
 - `No module named 'agx_motor_sdk'`：激活虚拟环境，并用 `python3 -m colcon build` 重新构建。
 - `failed to open CAN: can0`：按[快速开始](#快速开始)启用接口，并用 `ip -brief link show` 检查。
 - 日志显示 `External control gate is closed`：调用 `control_enable`，参数为 `{data: true}`。
+- 日志显示 `motor not enabled`：先调用 `enable`，参数为 `{data: true}`。RB200 未使能时收到目标会反复进出使能状态，所以驱动不转发。
 
 其他问题见 [docs/reference.zh-CN.md](docs/reference.zh-CN.md#常见问题)。
 

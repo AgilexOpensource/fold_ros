@@ -91,26 +91,35 @@ def fold_node(monkeypatch):
     return module
 
 
-def make_control_node(module):
+def make_control_node(module, enabled=None):
+    """``enabled``: joint index -> RB200 operation_enabled (default all enabled)."""
     calls = []
+    enabled = {0: True, 1: True} if enabled is None else enabled
     node = module.FoldRosNode.__new__(module.FoldRosNode)
     node._control_enabled = True
     node._control_gate_block_logged = False
     node._joint_names = ["joint1", "joint2"]
     node._joint_by_name = {"joint1": 0, "joint2": 1}
     node._position_mode_sent = {name: False for name in node._joint_names}
+    node._disabled_logged = set()
+    node._status_timeout = 2.0
+    warnings = []
 
     def motor(index):
         def set_target(position, mode):
             calls.append((index, position, mode))
             return True
-        return SimpleNamespace(set_target=set_target)
+        feedback = SimpleNamespace(status=SimpleNamespace(operation_enabled=enabled[index]),
+                                   timestamp_ns=9_000_000_000)
+        return SimpleNamespace(set_target=set_target, protocol="rb200",
+                               get_low_speed_feedback=lambda: feedback)
 
     node._group = SimpleNamespace(motor=motor)
     node.get_logger = lambda: SimpleNamespace(
-        info=lambda message: None, warn=lambda message: None,
+        info=lambda message: None, warn=warnings.append,
         debug=lambda message: None,
     )
+    node.warnings = warnings
     return node, calls
 
 
@@ -133,6 +142,25 @@ def test_position_mode_sent_once(fold_node):
     for position in (0.2, 0.3):
         node._on_control(SimpleNamespace(name=["joint1"], position=[position]))
     assert calls == [(0, 0.2, 1), (0, 0.3, 0xFF)]
+
+
+def test_disabled_motor_command_dropped_until_enabled(fold_node):
+    enabled = {0: False, 1: True}
+    node, calls = make_control_node(fold_node, enabled)
+    for position in (0.2, 0.3):
+        node._on_control(SimpleNamespace(name=["joint1", "joint2"], position=[position, position]))
+    assert calls == [(1, 0.2, 1), (1, 0.3, 0xFF)]
+    assert len(node.warnings) == 1 and "joint1" in node.warnings[0]   # warned once
+    enabled[0] = True
+    node._on_control(SimpleNamespace(name=["joint1"], position=[0.4]))
+    assert calls[-1] == (0, 0.4, 1)                                    # position mode sent on enable
+
+
+def test_stale_feedback_counts_as_disabled(fold_node, monkeypatch):
+    node, calls = make_control_node(fold_node)
+    monkeypatch.setattr(fold_node.time, "time_ns", lambda: 11_500_000_000)   # feedback 2.5 s old
+    node._on_control(SimpleNamespace(name=["joint1"], position=[0.2]))
+    assert calls == []
 
 
 def test_closed_gate_blocks_command(fold_node):
