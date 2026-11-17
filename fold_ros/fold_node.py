@@ -112,6 +112,7 @@ class FoldRosNode(Node):
             "feedback_rate": 100.0,
             "status_rate": 30.0,
             "status_timeout": 2.0,
+            "feedback_timeout": 0.5,
             "control_enabled": True,
         }
         for name, default in startup_parameters.items():
@@ -130,6 +131,10 @@ class FoldRosNode(Node):
             raise ValueError("status_rate must be finite and > 0")
         if not math.isfinite(self._status_timeout) or self._status_timeout <= 0.0:
             raise ValueError("status_timeout must be finite and > 0")
+        self._feedback_timeout = float(self.get_parameter("feedback_timeout").value)
+        if not math.isfinite(self._feedback_timeout) or self._feedback_timeout < 0.0:
+            raise ValueError("feedback_timeout must be finite and >= 0")
+        self._stale_joints: Set[str] = set()
         self._control_enabled = bool(self.get_parameter("control_enabled").value)
         self._control_gate_block_logged = False
 
@@ -286,7 +291,7 @@ class FoldRosNode(Node):
 
         for index in range(self._group.joint_count):
             state = self._group.get_state(index)
-            if state is None:
+            if state is None or not self._feedback_fresh(index):
                 continue
             msg.name.append(self._joint_names[index])
             msg.position.append(state.position_rad)
@@ -295,6 +300,27 @@ class FoldRosNode(Node):
 
         if msg.name:
             self._feedback_pub.publish(msg)
+
+    def _feedback_fresh(self, index: int) -> bool:
+        """False once a joint's cached high-speed feedback is older than ``feedback_timeout``.
+
+        The SDK keeps returning the last cached sample after a motor loses power, so without this
+        check a dead joint would keep publishing its old position. Samples without a timestamp
+        cannot be judged and are published.
+        """
+        if self._feedback_timeout <= 0.0:
+            return True
+        name = self._joint_names[index]
+        feedback = self._group.motor(index).get_high_speed_feedback()
+        stamp = feedback.timestamp_ns if feedback is not None else 0
+        fresh = stamp <= 0 or (time.time_ns() - stamp) / 1e9 <= self._feedback_timeout
+        if not fresh and name not in self._stale_joints:
+            self._stale_joints.add(name)
+            self.get_logger().warn("%s feedback older than %.2f s, not published" % (name, self._feedback_timeout))
+        elif fresh and name in self._stale_joints:
+            self._stale_joints.discard(name)
+            self.get_logger().info("%s feedback recovered" % name)
+        return fresh
 
     def _on_control(self, msg: JointState) -> None:
         if not self._check_can_control():

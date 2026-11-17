@@ -17,8 +17,9 @@
 | `feedback_rate` | `100.0` | 关节反馈频率，Hz |
 | `status_rate` | `30.0` | 诊断频率，Hz |
 | `status_timeout` | `2.0` | 诊断新鲜度上限，s |
+| `feedback_timeout` | `0.5` | 关节反馈超过此时长不再发布，s；0 表示一直发布缓存值 |
 
-- 频率和 `status_timeout` 必须有限且大于 0。
+- 频率和 `status_timeout` 必须有限且大于 0；`feedback_timeout` 必须有限且不小于 0。
 - 所有参数在启动后只读。
 - `control_enabled` 保持启动值；`control_enable` 服务修改实际门控。
 - 逐关节使能和失能帧之间间隔 0.1 s。
@@ -46,7 +47,7 @@
 
 单位为 rad、rad/s 和 N·m。
 
-没有 SDK 状态的关节不出现在 `feedback/joint_states` 中。
+没有 SDK 状态的关节不出现在 `feedback/joint_states` 中。高速反馈超过 `feedback_timeout`（按主机挂钟时间）的关节也不发布：电机断电后 SDK 会一直返回最后一个样本，否则下游控制器会把它当成实时反馈。没有时间戳的样本无法判断，照常发布。
 
 ## 硬件 YAML
 
@@ -80,7 +81,7 @@
 ## 运行边界
 
 - 关闭指令门控不会失能电机，也不会取消已发送的目标。
-- 诊断过期不会停止指令，也不会清除缓存的关节反馈。
+- 诊断过期不会停止指令。关节反馈另有 `feedback_timeout`。
 - 节点退出时关闭 SDK 连接，但不失能电机。
 - `enable` 服务返回 SDK 的结果；硬件实际状态请看 `motor_status`。
 - 看门狗、轨迹执行和故障恢复应由本驱动的上层负责。

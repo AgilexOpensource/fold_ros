@@ -278,6 +278,13 @@ def test_startup_failure_closes_group(fold_node, monkeypatch, method):
     assert closed == [True]
 
 
+@pytest.mark.parametrize("value", [-0.1, float("nan"), float("inf")])
+def test_invalid_feedback_timeout_rejected_before_connect(fold_node, value):
+    fold_node.FoldRosNode.__bases__[0].parameter_overrides = {"feedback_timeout": value}
+    with pytest.raises(ValueError, match="feedback_timeout must be finite and >= 0"):
+        fold_node.FoldRosNode()
+
+
 @pytest.mark.parametrize("parameter", ["feedback_rate", "status_rate", "status_timeout"])
 @pytest.mark.parametrize("value", [0.0, -1.0, float("nan"), float("inf")])
 def test_invalid_rates_rejected_before_connect(fold_node, parameter, value):
@@ -289,7 +296,7 @@ def test_invalid_rates_rejected_before_connect(fold_node, parameter, value):
 def test_startup_parameters_readonly_and_default_rates(fold_node, monkeypatch):
     configure_startup(fold_node, monkeypatch)
     node = fold_node.FoldRosNode()
-    assert len(node.descriptors) == 9
+    assert len(node.descriptors) == 10
     assert all(descriptor.read_only for descriptor in node.descriptors.values())
     assert [period for period, _ in node.timers] == [0.01, 1.0 / 30.0]
 
@@ -437,3 +444,55 @@ def test_rb200_frame_cached_during_publish_is_fresh(fold_node, monkeypatch):
     )
     statuses = publish_rb200_status(fold_node, [read, read])
     assert [status.level for status in statuses] == [DiagnosticStatus.OK] * 2
+
+
+def make_feedback_node(module, cls, stamps, timeout=0.5):
+    """Node with one joint per entry in ``stamps`` (high-speed feedback timestamp, ns)."""
+    module.JointState = lambda: SimpleNamespace(header=SimpleNamespace())
+    node = cls.__new__(cls)
+    node._feedback_timeout = timeout
+    node._stale_joints = set()
+    node._joint_names = ["joint%d" % i for i in range(len(stamps))]
+    published, logs = [], []
+    node._feedback_pub = SimpleNamespace(publish=published.append)
+    node.get_clock = lambda: SimpleNamespace(now=lambda: SimpleNamespace(to_msg=lambda: None))
+    node.get_logger = lambda: SimpleNamespace(warn=logs.append, info=logs.append)
+
+    def motor(index):
+        stamp = stamps[index]
+        feedback = None if stamp is None else SimpleNamespace(timestamp_ns=stamp)
+        return SimpleNamespace(get_high_speed_feedback=lambda: feedback)
+
+    def get_state(index):
+        return SimpleNamespace(position_rad=0.1 * index, velocity_rad_s=0.0, torque_nm=0.0)
+
+    node._group = SimpleNamespace(joint_count=len(stamps), motor=motor, get_state=get_state)
+    return node, published, logs
+
+
+def test_feedback_older_than_timeout_is_not_published(fold_node):
+    # time_ns is 10 s; joint1 is 0.6 s old; joint2 and joint3 have no usable stamp, so cannot be judged
+    stamps = [9_600_000_000, 9_400_000_000, 0, None]
+    node, published, logs = make_feedback_node(fold_node, fold_node.FoldRosNode, stamps)
+    node._publish_feedback()
+    assert published[-1].name == ["joint0", "joint2", "joint3"]
+    assert logs == ["joint1 feedback older than 0.50 s, not published"]
+    node._publish_feedback()
+    assert len(logs) == 1
+
+
+def test_feedback_timeout_zero_publishes_cached_samples(fold_node):
+    node, published, _ = make_feedback_node(fold_node, fold_node.FoldRosNode, [1, 1], timeout=0.0)
+    node._publish_feedback()
+    assert published[-1].name == ["joint0", "joint1"]
+
+
+def test_stale_joint_is_published_again_once_fresh(fold_node):
+    stamps = [9_000_000_000]
+    node, published, logs = make_feedback_node(fold_node, fold_node.FoldRosNode, stamps)
+    node._publish_feedback()
+    assert published == []
+    stamps[0] = 10_000_000_000
+    node._publish_feedback()
+    assert published[-1].name == ["joint0"]
+    assert logs[-1] == "joint0 feedback recovered"
