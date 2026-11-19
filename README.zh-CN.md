@@ -86,7 +86,7 @@ ros2 service call /fold/enable std_srvs/srv/SetBool '{data: false}'
 | `control/joint_states` | 订阅话题 | `sensor_msgs/msg/JointState` | 关节目标；电机未使能的关节会被丢弃 |
 | `feedback/joint_states` | 发布话题 | `sensor_msgs/msg/JointState` | 按 `feedback_rate` 发布的关节反馈 |
 | `feedback/motor_status` | 发布话题 | `diagnostic_msgs/msg/DiagnosticArray` | 按 `status_rate` 发布，每关节一条状态 |
-| `enable` | 服务 | `std_srvs/srv/SetBool` | 使能或失能电机 |
+| `enable` | 服务 | `std_srvs/srv/SetBool` | 使能或失能电机。处于使能意图时（来自 `auto_enable` 或本服务），报告失能且无故障位的关节（如松开急停后、断电再上电且反馈恢复后）会像启动时一样重新配置并使能，每秒最多一次。从发现失能起，到重新使能且已满 `feedback_timeout` 为止，该关节不发布反馈并丢弃目标。有故障位的关节，以及调用 `{data: false}` 后的全部关节，保持失能 |
 | `control_enable` | 服务 | `std_srvs/srv/SetBool` | 打开或关闭指令门控 |
 
 指令规则和单位见 [docs/reference.zh-CN.md](docs/reference.zh-CN.md#指令与反馈)；`motor_status` 字段见 [docs/reference.zh-CN.md](docs/reference.zh-CN.md#诊断)。

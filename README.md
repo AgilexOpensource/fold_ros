@@ -86,7 +86,7 @@ Names are relative to the node namespace (default `/fold`). Topics use reliable,
 | `control/joint_states` | Subscribed topic | `sensor_msgs/msg/JointState` | Joint targets; dropped for joints whose motor is not enabled |
 | `feedback/joint_states` | Published topic | `sensor_msgs/msg/JointState` | Joint feedback at `feedback_rate` |
 | `feedback/motor_status` | Published topic | `diagnostic_msgs/msg/DiagnosticArray` | One status per joint at `status_rate` |
-| `enable` | Service | `std_srvs/srv/SetBool` | Enable or disable the motors |
+| `enable` | Service | `std_srvs/srv/SetBool` | Enable or disable the motors. While enabled (from `auto_enable` or this service), a joint that reports disabled with no fault bit, as after an e-stop release or a power cut (once its feedback is back), is re-configured and re-enabled like at startup, at most once a second. From the moment it is seen disabled until it has been enabled again and at least `feedback_timeout` has passed, its feedback is not published and its targets are dropped. A faulted joint, or any joint after `{data: false}`, stays disabled |
 | `control_enable` | Service | `std_srvs/srv/SetBool` | Open or close the command gate |
 
 Command rules and units are in [docs/reference.md](docs/reference.md#commands-and-feedback); the `motor_status` fields are in [docs/reference.md](docs/reference.md#diagnostics).
